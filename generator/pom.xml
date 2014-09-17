@@ -1,0 +1,28 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <parent>
+        <artifactId>thumbnailer</artifactId>
+        <groupId>com.vg</groupId>
+        <version>0.1</version>
+    </parent>
+    <modelVersion>4.0.0</modelVersion>
+
+    <artifactId>generator</artifactId>
+
+    <packaging>jar</packaging>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.vg</groupId>
+            <artifactId>ffmpeg</artifactId>
+            <version>0.7.13.2</version>
+            <scope>system</scope>
+            <systemPath>${project.basedir}/../ffmpeg-wrapper/src/main/resources/0.7/ffmpeg-0.7.13.2.jar</systemPath>
+        </dependency>
+        <dependency>
+            <groupId>com.nativelibs4java</groupId>
+            <artifactId>bridj</artifactId>
+            <version>0.6.2</version>
+        </dependency>
+    </dependencies>
+</project>
