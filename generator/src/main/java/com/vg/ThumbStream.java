@@ -5,8 +5,6 @@ import org.bridj.Pointer;
 import org.ffmpeg.avcodec.*;
 import org.ffmpeg.avformat.AVFormatContext;
 import org.ffmpeg.avformat.AVStream;
-import org.ffmpeg.avformat.AvformatLibrary;
-import org.ffmpeg.avutil.AVRational;
 import org.ffmpeg.swscale.SwscaleLibrary;
 
 import java.io.Closeable;
@@ -14,84 +12,79 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
-import static java.lang.Math.min;
 import static java.nio.ByteBuffer.allocateDirect;
 import static org.bridj.Pointer.pointerTo;
 import static org.ffmpeg.avcodec.AvcodecLibrary.avcodec_decode_video2;
 import static org.ffmpeg.avcodec.AvcodecLibrary.avpicture_fill;
 import static org.ffmpeg.avformat.AvformatLibrary.*;
+import static org.ffmpeg.avutil.AvutilLibrary.AV_TIME_BASE;
 import static org.ffmpeg.avutil.AvutilLibrary.av_free;
 import static org.ffmpeg.avutil.PixelFormat.PIX_FMT_RGB24;
 
 
 public class ThumbStream implements Closeable {
 
-    int frameDuration = -1;
-    AVRational time_base = null;
-    AVPacket packet = new AVPacket();
+    private AVPacket packet;
     private AVFormatContext formatCtx;
     private AVCodecContext codecCtx;
     private AVFrame frame;
     private AVFrame frameRGB;
     private AVStream stream;
-    int[] timeValues;
-    //private SeekableInputStream in;
+    // Duration of one frame in AV_TIME_BASE units
+    private int frameDuration;
 
-    public static ThumbStream open(File file) throws IOException {
-        ThumbStream thumbs = new ThumbStream();
-
-        thumbs.formatCtx = FfmpegUtil.openFormat(file);
-        AvformatLibrary.av_read_frame(pointerTo(thumbs.formatCtx), pointerTo(thumbs.packet));
-        thumbs.frameDuration = thumbs.packet.duration();
-        thumbs.stream = FfmpegUtil.findVideoStream(thumbs.formatCtx);
-        thumbs.time_base = thumbs.stream.time_base();
-        //todo fix
-        //MovieAtom moov = parseMoovAtomCopy(file);
-        //moov = fixTimescale(moov);
-        //thumbs.timeValues = moov.getVideoTrack().getTimevalues();
-        thumbs.timeValues = new int[1];
-        thumbs.timeValues[0] = 0;
-        return thumbs;
+    public ThumbStream(File file) throws IOException {
+        this.packet = new AVPacket();
+        this.formatCtx = FfmpegUtil.openFormat(file);
+        //this.packetDuration = this.packet.duration();
+        this.stream = FfmpegUtil.findVideoStream(this.formatCtx);
+        //this.time_base = this.stream.time_base();
+        this.codecCtx = initCodecContext(this.stream);
+        this.frameDuration = (this.codecCtx.time_base().num() * AV_TIME_BASE) / this.codecCtx.time_base().den();
     }
 
-    AVFrame getFrame() {
+    private AVFrame getFrame() {
         if (frame == null) {
             frame = AvcodecLibrary.avcodec_alloc_frame().get();
         }
         return frame;
     }
 
-    AVFrame getFrameRGB() {
+    private AVFrame getFrameRGB() {
         if (frameRGB == null) {
             frameRGB = AvcodecLibrary.avcodec_alloc_frame().get();
         }
         return frameRGB;
     }
 
-    int getWidth() {
-        return getCodecCtx().width();
+    private int getWidth() {
+        return codecCtx.width();
     }
 
-    int getHeight() {
-        return getCodecCtx().height();
+    private int getHeight() {
+        return codecCtx.height();
     }
 
-    AVCodecContext getCodecCtx() {
-        if (codecCtx == null) {
-            codecCtx = new AVCodecContext(stream.codec());
-            FfmpegUtil.openCodec(codecCtx);
-            if (codecCtx.width() <= 0 || codecCtx.height() <= 0) {
-                throw new IllegalStateException("Dimensions are wrong.");
-            }
+    private AVCodecContext getCodecCtx() {
+        return codecCtx;
+    }
+
+    private static AVCodecContext initCodecContext(AVStream stream) {
+        AVCodecContext codecCtx = new AVCodecContext(stream.codec());
+        FfmpegUtil.openCodec(codecCtx);
+        if (codecCtx.width() <= 0 || codecCtx.height() <= 0) {
+            throw new IllegalStateException("Dimensions are wrong.");
         }
         return codecCtx;
     }
 
-    void seek(long requiredPts) {
-        av_seek_frame(pointerTo(formatCtx), stream.index(), requiredPts, AVSEEK_FLAG_BACKWARD);
+    private void seek(long requiredPts) {
+        if (av_seek_frame(pointerTo(formatCtx), -1, requiredPts, AVSEEK_FLAG_ANY) < 0) {
+            throw new IllegalStateException("av_seek_frame failed to " + requiredPts);
+        }
     }
 
-    void convertToRgb(AVFrame srcFrame, Rgb24 dst) {
+    private void convertToRgb(AVFrame srcFrame, Rgb24 dst) {
         AVFrame rgb = getFrameRGB();
         avpicture_fill(pointerTo(rgb).as(AVPicture.class), Pointer.pointerToBytes(dst.getData()), PIX_FMT_RGB24, dst.getWidth(), dst.getHeight());
         scale(srcFrame, rgb);
@@ -100,7 +93,7 @@ public class ThumbStream implements Closeable {
     private Pointer swsContext = null;
     private Rgb24 thumb;
 
-    int scale(AVFrame srcFrame, AVFrame dstFrame) {
+    private int scale(AVFrame srcFrame, AVFrame dstFrame) {
         return SwscaleLibrary.sws_scale(getSwsContext(), srcFrame.data(), srcFrame.linesize(), 0, srcFrame.height(), dstFrame.data(), dstFrame.linesize());
     }
 
@@ -118,71 +111,27 @@ public class ThumbStream implements Closeable {
         return swsContext;
     }
 
-    private volatile boolean closed = false;
 
-    public void close() {
-        if (!closed) {
-            closed = true;
-            //if (in != null) {
-            //    IOUtils.closeQuietly(in);
-            //}
-            if (frame != null) {
-                av_free(pointerTo(frame));
-            }
-            if (frameRGB != null) {
-                av_free(pointerTo(frameRGB));
-            }
-            if (codecCtx != null) {
-                FfmpegUtil.closeCodec(codecCtx);
-            }
-            if (formatCtx != null) {
-                av_close_input_file(pointerTo(formatCtx));
-            }
-            if (swsContext != null) {
-                SwscaleLibrary.sws_freeContext(swsContext);
-            }
-        }
-    }
-
-    public Rgb24 createPreviewThumbnails(int[] frameNumbers) throws IOException {
-        long[] timeValues = new long[frameNumbers.length];
-
-        for (int i = 0; i < frameNumbers.length; i++) {
-            timeValues[i] = this.timeValues[min(this.timeValues.length - 1, frameNumbers[i])];
-        }
-        return createPreviewThumbnails(timeValues);
-    }
-
-    public Rgb24 createPreviewThumbnails(long[] timeValues) throws IOException {
-        if (closed) {
-            throw new IllegalStateException("closed");
-        }
+    public Rgb24 createPreviewThumbnails(int[] frames) throws IOException {
         int w = getWidth();
         int h = getHeight();
         thumb = thumb != null && thumb.getWidth() == w && thumb.getHeight() == h ? thumb : new Rgb24(w, h, allocateDirect(Rgb24.sizeof(w, h)));
-        Rgb24 resultRgb = new Rgb24(w * timeValues.length, h);
+        Rgb24 resultRgb = new Rgb24(w * frames.length, h);
 
         Pointer<Integer> frameFinished = Pointer.allocateInt();
-        for (int i = 0; i < timeValues.length; i++) {
-            long expectedPts = timeValues[i] / time_base.num();
+        for (int i = 0; i < frames.length; i++) {
+            long expectedPts = frames[i] * frameDuration;
             seek(expectedPts);
-            long actualPts = -1;
-            inner: do {
-                frameFinished.setInt(0);
-                while (frameFinished.getInt() == 0) {
-                    FfmpegUtil.freePacket(packet);
-                    int rv = av_read_frame(pointerTo(formatCtx), pointerTo(packet));
-                    if (packet.stream_index() == this.stream.index()) {
-                        long seek = rv < 0 ? -1 : packet.pts();
-                        if (seek == -1) {
-                            //EOF or error
-                            break inner;
-                        }
-                        actualPts = packet.pts();
-                        avcodec_decode_video2(pointerTo(getCodecCtx()), pointerTo(getFrame()), frameFinished, pointerTo(packet));
-                    }
+
+            frameFinished.setInt(0);
+            FfmpegUtil.freePacket(packet);
+            while (av_read_frame(pointerTo(formatCtx), pointerTo(packet)) >= 0 && frameFinished.get() == 0) {
+                if (packet.stream_index() == this.stream.index()) {
+                    avcodec_decode_video2(pointerTo(getCodecCtx()), pointerTo(getFrame()), frameFinished, pointerTo(packet));
                 }
-            } while (expectedPts != actualPts);
+                FfmpegUtil.freePacket(packet);
+            }
+
             // System.out.println(i + " req: " + pts + " actual: " + seek);
             convertToRgb(getFrame(), thumb);
             ByteBuffer dstData = resultRgb.getData();
@@ -197,9 +146,23 @@ public class ThumbStream implements Closeable {
         return resultRgb;
     }
 
-    protected void finalize() throws Throwable {
-        super.finalize();
-        close();
+    @Override
+    public void close() {
+        if (frame != null) {
+            av_free(pointerTo(frame));
+        }
+        if (frameRGB != null) {
+            av_free(pointerTo(frameRGB));
+        }
+        if (codecCtx != null) {
+            FfmpegUtil.closeCodec(codecCtx);
+        }
+        if (formatCtx != null) {
+            av_close_input_file(pointerTo(formatCtx));
+        }
+        if (swsContext != null) {
+           SwscaleLibrary.sws_freeContext(swsContext);
+        }
     }
 
 }

@@ -26,7 +26,7 @@ public class ThumbnailGeneratorTest {
     public void testGenerateSingleThumbForH264Video() throws Exception {
         Path moviePath = resolveTestResource("/thumbs.mov");
 
-        BufferedImage bi = ThumbnailGenerator.generate(moviePath, 0, 1);
+        BufferedImage bi = ThumbnailGenerator.generate(moviePath, 500, 100);
 
         Path tmp = Files.createTempFile("my", "jpg");
         ImageUtil.output(bi, tmp);
